@@ -18,6 +18,11 @@ It also contains a 128x64 pixel OLED display wired to the I2C port.
 The robot has a 2:1 voltage divider to allow battery voltage monitoring in real time. 
 6
 */
+
+#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
+  #define Serial SERIAL_PORT_USBVIRTUAL  // Required for Serial on Zero based boards
+#endif
+
 #include <Arduino.h>
 #include <wiring_private.h>
 //#include "libs/Analog_Write_SAMD/Analog_Write_SAMD.h"
@@ -41,11 +46,6 @@ The robot has a 2:1 voltage divider to allow battery voltage monitoring in real 
 #include "libs/RadioHead/RHNRFSPIDriver.h"
 #include "libs/RadioHead/RHNRFSPIDriver.cpp"
 
-#if defined(ARDUINO_SAMD_ZERO) && defined(SERIAL_PORT_USBVIRTUAL)
-  // Required for Serial on Zero based boards
-  #define Serial SERIAL_PORT_USBVIRTUAL
-#endif
-//#define RH_ASK_ARDUINO_USE_TIMER2 //use timer 2 as timer 1 is used by the tone library
 RH_NRF24 nrf24(2, 38); //CE, CSN
 
 // ================================================================
@@ -57,6 +57,7 @@ RH_NRF24 nrf24(2, 38); //CE, CSN
 #include "libs/Adafruit_SSD1306/Adafruit_SSD1306.h"
 #include "libs/Adafruit_SSD1306/Adafruit_SSD1306.cpp"
 #include "libs/Adafruit_GFX/Fonts/TomThumb.h"
+
 #define OLED_RESET A5
 Adafruit_SSD1306 display(OLED_RESET);
 
@@ -90,6 +91,9 @@ Adafruit_SSD1306 display(OLED_RESET);
 #define MOTOR_L_DIR 12
 #define MOTOR_L_SPD 6
 
+#define MOT_R_SPD_REG REG_TC3_COUNT8_CC0
+#define MOT_L_SPD_REG REG_TCC0_CCB2
+
 #define BATT_VOLTAGE A4 //Battery voltage monitor pin - connected to 50% divider to allow the measurment of voltages higher than the vcc of 3.3v
 
 #define FWD 0 // 0 = forward in our robot wiring
@@ -113,7 +117,7 @@ Adafruit_SSD1306 display(OLED_RESET);
 uint8_t sendBuff[7];  // 28 element array of unsigned 8-bit type - 28 is the max message length for the nrf24L01 radio
 uint8_t recvBuff[RH_NRF24_MAX_MESSAGE_LEN]; // Receive Buffer
 uint8_t lenRecv = sizeof(recvBuff);
-bool recvState;
+bool recvFlag  = false;
 
 int iteration=0;
 
@@ -136,6 +140,8 @@ int loopTimer;
 
 int slowTimer;
 int autoState;
+
+unsigned char loopCounter;
 
 unsigned long lastMillis, timeAway;
 unsigned long lastMillisGyro, timeAwayGyro;
@@ -171,13 +177,13 @@ void setup() {
   pinMode(LED_R_G, OUTPUT);
   pinMode(LED_R_B, OUTPUT);
 
-  digitalWrite(LED_L_R, 1);  //ML_PWM
-  digitalWrite(LED_L_G, 1);  //ML_PWM
-  digitalWrite(LED_L_B, 1);  //ML_PWM
+  digitalWrite(LED_L_R, 1);  
+  digitalWrite(LED_L_G, 1); 
+  digitalWrite(LED_L_B, 1); 
 
-  digitalWrite(LED_R_R, 1);  //ML_PWM
-  digitalWrite(LED_R_G, 1);  //ML_PWM
-  digitalWrite(LED_R_B, 1);  //ML_PWM
+  digitalWrite(LED_R_R, 1); 
+  digitalWrite(LED_R_G, 1); 
+  digitalWrite(LED_R_B, 1);  
 
   digitalWrite(MOTOR_R_DIR, FWD);
   //analogWrite(MOTOR_R_SPD, 0);
@@ -288,6 +294,7 @@ void setup() {
   while (TCC0->SYNCBUSY.bit.ENABLE);              // Wait for synchronization
 
 
+
 // ================================================================
 // ===                    OLED Display SETUP                    ===
 // ================================================================ 
@@ -328,27 +335,42 @@ void setup() {
 
 void loop()
 {
-  updateRadio();        //check on the radio, if new data received "buttons" will be updated with new data (one 8 bit char, each bit is one button)
-  //reactRemote(); // Do something with remote inputs - usually for manual RC mode driving
-  debugSensors();  // Turn on the motors and or LEDs when sensors see something mostly for debugging
-  updateDisplay();    // update the display
-  //autoz();           // run custom auto program
+  loopCounter ++; // 8 bit unsigned counter variable will overflow back to 0 after 255
+  if (loopCounter > 127) digitalWrite(LED_L_B, LED_OFF); // Blink Left Blue LED
+  else digitalWrite(LED_L_B, LED_ON); // Blinking shows the main program loop is working at least :D
+
+  // The below referenced functions are all below this main loop
+  updateRadio();   // Receive from and Send data to the remote
+  debugSensors();  // IR sensors turn on/off the motor outputs and green LEDs
+  updateDisplay(); // Update the display with new data
+  reactRemote();   // Do something with remote inputs - usually for manual RC mode driving
+  //autoz();         // Update custom auto maze running state machine
 
 } // end main loop
 
 void updateDisplay()
 {
   display.clearDisplay(); // Clear display at start of this cycle
-  display.setCursor(0,7); // Set printing to start at top left of screen again
+  display.setCursor(0,7); // Set printing to start at top left of screen again - 7 pixels down for TomThumb font height offset
+  
+  display.print("B ");
+  display.println(analogRead(BATT_VOLTAGE)); // print battery voltage
   display.println(millis());
+  display.print("Loop ");
   display.println(loopTime);
+  display.print("R0   ");
   display.println(recvBuff[0]);
+  display.print("R1   ");
   display.println(recvBuff[1]);
 
-  if (recvState == true); // was data received?
+  if (recvFlag) // was data received?
   {  
+    recvFlag = false;
     display.println("Receive");
-    recvState = false;
+  }
+  else
+  {
+    display.println("!");
   }
   
   loopTime = millis() - lastMillisLoop;
@@ -364,35 +386,31 @@ void debugSensors()
 {
   if (digitalRead(IR_SENSOR_L) == WALL_DETECTED) // this if statement does the same thing as the above lines but is written with an IF statement
   {
-    REG_TCC0_CCB2 = 127;       // TCC0 CCB2 - 50% duty cycle
+    MOT_L_SPD_REG = 127;       // Left motor PWM register
     digitalWrite(LED_L_G, LED_ON); // Turn ON the Green LED
-  }
-  else
+  } else 
   {
-    REG_TCC0_CCB2 = 255;       // TCC0 CCB2 - 100% duty cycle on D6
+    MOT_L_SPD_REG = 0;        // Left motor PWM register
     digitalWrite(LED_L_G, LED_OFF); // Turn OFF the Green LED
   }
    
   if (digitalRead(IR_SENSOR_R) == WALL_DETECTED) // this if statement does the same thing as the above lines but is written with an IF statement
   {
-    REG_TC3_COUNT8_CC0 = 127;                   
-    while (TC3->COUNT8.STATUS.bit.SYNCBUSY); 
+    MOT_R_SPD_REG = 127; // Right motor PWM register                    
     digitalWrite(LED_R_G, LED_ON); // Turn ON the Green LED
-  }
-  else
+  } else 
   {
-    REG_TC3_COUNT8_CC0 = 0;                   
-    while (TC3->COUNT8.STATUS.bit.SYNCBUSY);
+    MOT_R_SPD_REG = 0; // Right motor PWM register                     
     digitalWrite(LED_R_G, LED_OFF); // Turn OFF the Green LED
   }
 }
-
 
 void reactRemote()
 {
   
   if (bitRead(recvBuff[0], REMOTE_A) == HIGH){ //if button A pushed // drive at start degrees
 
+    digitalWrite(LED_L_R, LED_ON);
     if(startAButton == true) // debouncing
     {
       startAButton = false;
@@ -401,6 +419,7 @@ void reactRemote()
   }
   else
   {
+    digitalWrite(LED_L_R, LED_OFF);
     startAButton = true; // once released reset start variable so button can be pushed again
   }
   
@@ -449,24 +468,24 @@ void reactRemote()
     } 
     else forwardRamp = forwardRamp + 10; // increment ramp value by 1 
 
-    motors(FWD,FWD,forwardRamp,forwardRamp);// leftDirection, RightDirection, leftSpeed, rightSpeed
+   // motors(FWD,FWD,forwardRamp,forwardRamp);// leftDirection, RightDirection, leftSpeed, rightSpeed
   }
   else{
     forwardRamp = 30;
     loopTimer = 0;
   }  
   if (bitRead(recvBuff[0], REMOTE_BWD) == HIGH){ // Backwards
-    motors(BWD,BWD,100,100);// leftDirection, RightDirection, leftSpeed, rightSpeed
+    //motors(BWD,BWD,100,100);// leftDirection, RightDirection, leftSpeed, rightSpeed
   }
   if (bitRead(recvBuff[0], REMOTE_LEFT) == HIGH){ // Left
-    motors(BWD,FWD,70,70);// leftDirection, RightDirection, leftSpeed, rightSpeed
+    //motors(BWD,FWD,70,70);// leftDirection, RightDirection, leftSpeed, rightSpeed
   }
   else if (bitRead(recvBuff[0], REMOTE_RIGHT) == HIGH){ // Right
-    motors(FWD,BWD,70,70);// leftDirection, RightDirection, leftSpeed, rightSpeed
+    //motors(FWD,BWD,70,70);// leftDirection, RightDirection, leftSpeed, rightSpeed
   } 
   if (recvBuff[0] == 0) // No buttons pushed
   {
-    motors(FWD,FWD,0,0); //turn off motors
+    //motors(FWD,FWD,0,0); //turn off motors
   }
  
 }
@@ -483,9 +502,8 @@ void updateRadio()
       sendCounter++;
       nrf24.send(sendBuff, sizeof(sendBuff)); // send the data inside the "sendBuffer" variable
       nrf24.waitPacketSent(); // Return true if data sent, false if MAX_RT
-      recvState = true;  
+      recvFlag = true;  
 
-      //battVoltage = analogRead(BATT_VOLTAGE);
       sendBuff[0] = sendCounter;
       sendBuff[1] = loopTime; //map(battVoltage,0,1023,0,255);
       sendBuff[2] = 123; //timeAway;
@@ -583,28 +601,28 @@ void autoz()
 //        MOTOR CONTROLLER
 // -------------------------------------------------------------------
  
-void Move(int motor, int direction, int speed) {            
-  // Left Motor
-  // -- -- -- -- -- -- -- -- -- -- -- -- -- --
-  if (motor == 0){
+void Move(int motor, int direction, int speed) 
+{            
+  if (motor == 0){ // Left Motor
     digitalWrite(MOTOR_L_DIR, direction);
     // Send PWM data to motor A
-    analogWrite(MOTOR_L_SPD, speed);
-  // Right Motor
-  // -- -- -- -- -- -- -- -- -- -- -- -- -- --
-  } else if (motor == 1){
+    REG_TCC0_CCB2 = speed;       // Left motor PWM register
+    //analogWrite(MOTOR_L_SPD, speed);
+  } else if (motor == 1){  // Right Motor
     digitalWrite(MOTOR_R_DIR, direction);
     // Send PWM data to motor A
-    analogWrite(MOTOR_R_SPD, speed);
+    REG_TC3_COUNT8_CC0 = speed; // Right motor PWM register  
+    //analogWrite(MOTOR_R_SPD, speed);
   }
-
 }
 void motors(char leftDirection,char rightDirection, char leftSpeed, char rightSpeed)
 {
   digitalWrite(MOTOR_L_DIR, leftDirection);
   digitalWrite(MOTOR_R_DIR, rightDirection);
-  analogWrite(MOTOR_L_SPD, leftSpeed);
-  analogWrite(MOTOR_R_SPD, rightSpeed);
+  REG_TCC0_CCB2 = leftSpeed;       // Left motor PWM register
+  REG_TC3_COUNT8_CC0 = rightSpeed; // Right motor PWM register     
+  //analogWrite(MOTOR_L_SPD, leftSpeed);
+  //analogWrite(MOTOR_R_SPD, rightSpeed);
 }
 void autozBlocking()
 {
