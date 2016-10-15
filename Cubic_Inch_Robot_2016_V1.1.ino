@@ -52,6 +52,7 @@ RH_NRF24 nrf24(2, 38); //CE, CSN
 // ===                  OLED Display Includes                   ===
 // ================================================================
 
+#include "libs/Adafruit_GFX/glcdfont.c"
 #include "libs/Adafruit_GFX/Adafruit_GFX.h"
 #include "libs/Adafruit_GFX/Adafruit_GFX.cpp"
 #include "libs/Adafruit_SSD1306/Adafruit_SSD1306.h"
