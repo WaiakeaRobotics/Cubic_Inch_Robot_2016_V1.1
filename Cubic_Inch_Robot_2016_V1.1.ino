@@ -208,11 +208,12 @@ void setup() {
 
   //pinMode(IR_38Khz, OUTPUT);
   //tone(IR_38Khz, 38000); // Set IR LED pin to 38khz 50% duty cycle square wave
-  analogWrite(IR_38Khz, 127); 
-  analogWrite(MOTOR_R_SPD, 0); // Make sure both motors are off
-  analogWrite(MOTOR_L_SPD, 0);
+  //analogWrite(IR_38Khz, 127); 
+  //analogWrite(MOTOR_R_SPD, 0); // Make sure both motors are off
+  //analogWrite(MOTOR_L_SPD, 0);
+  
 
-// Configure TC3 for IR_LED and MR_PWM
+// Configure TC3 which is used for IR_LED and MR_PWM pins
 // Set up the generic clock (GCLK4) used to clock timers
   REG_GCLK_GENDIV = GCLK_GENDIV_DIV(5) |          // Divide the 48MHz clock source by divisor 3: 48MHz/3=16MHz
                     GCLK_GENDIV_ID(4);            // Select Generic Clock (GCLK) 4
@@ -230,6 +231,109 @@ void setup() {
                      GCLK_CLKCTRL_ID_TCC2_TC3;    // Feed GCLK4 to TCC2 (and TC3)
   while (GCLK->STATUS.bit.SYNCBUSY);              // Wait for synchronization
 
+  Tc* TCx ;
+  TCx = TC3;
+  unsigned int presc_tc=0;
+  presc_tc=TC_CTRLA_PRESCALER_DIV1;
+  uint8_t Channelx = 1;
+  unsigned char duty = 127;
+  unsigned char pin = 5;
+
+  uint32_t attr = g_APinDescription[pin].ulPinAttribute ;
+  
+  if ( (g_APinDescription[pin].ulPinType == PIO_TIMER) || g_APinDescription[pin].ulPinType == PIO_TIMER_ALT )
+  {
+     pinPeripheral( pin, g_APinDescription[pin].ulPinType ) ;
+  }
+  
+  //GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK3 | GCLK_CLKCTRL_ID( GCM_TCC2_TC3 ));
+
+  // -- Configure TC
+  //DISABLE TCx
+  TCx->COUNT8.CTRLA.reg &=~(TC_CTRLA_ENABLE);
+  //Set Timer counter Mode to 8 bits
+  TCx->COUNT8.CTRLA.reg |= TC_CTRLA_MODE_COUNT8;
+  // Prescaler
+  TCx->COUNT8.CTRLA.reg |=presc_tc;
+  //Set TCx as normal PWM
+  TCx->COUNT8.CTRLA.reg |= TC_CTRLA_WAVEGEN_NPWM;
+  //Set TCx in waveform mode Normal PWM
+  TCx->COUNT8.CC[Channelx].reg = 127;
+  //Set PER to maximum counter value (resolution : 0xFF)
+  TCx->COUNT8.PER.reg = 0xFF;
+  // Enable TCx
+  TCx->COUNT8.CTRLA.reg |= TC_CTRLA_ENABLE;
+
+
+  Channelx = 0;
+  duty = 127;
+  pin = 10;
+
+  attr = g_APinDescription[pin].ulPinAttribute ;
+  
+  if ( (g_APinDescription[pin].ulPinType == PIO_TIMER) || g_APinDescription[pin].ulPinType == PIO_TIMER_ALT )
+  {
+     pinPeripheral( pin, g_APinDescription[pin].ulPinType ) ;
+  }
+  
+  //GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK3 | GCLK_CLKCTRL_ID( GCM_TCC2_TC3 ));
+
+  // -- Configure TC
+  //DISABLE TCx
+  TCx->COUNT8.CTRLA.reg &=~(TC_CTRLA_ENABLE);
+  //Set Timer counter Mode to 8 bits
+  TCx->COUNT8.CTRLA.reg |= TC_CTRLA_MODE_COUNT8;
+  // Prescaler
+  TCx->COUNT8.CTRLA.reg |=presc_tc;
+  //Set TCx as normal PWM
+  TCx->COUNT8.CTRLA.reg |= TC_CTRLA_WAVEGEN_NPWM;
+  //Set TCx in waveform mode Normal PWM
+  TCx->COUNT8.CC[Channelx].reg = 127;
+  //Set PER to maximum counter value (resolution : 0xFF)
+  TCx->COUNT8.PER.reg = 0xFF;
+  // Enable TCx
+  TCx->COUNT8.CTRLA.reg |= TC_CTRLA_ENABLE;
+
+/*
+
+                // -- Configure TC
+                //DISABLE TCx
+                TCx->COUNT8.CTRLA.reg &=~(TC_CTRLA_ENABLE);
+                //Set Timer counter Mode to 8 bits
+                TCx->COUNT8.CTRLA.reg |= TC_CTRLA_MODE_COUNT8;
+                // Prescaler
+                TCx->COUNT8.CTRLA.reg |=presc_tc;
+                //Set TCx as normal PWM
+                TCx->COUNT8.CTRLA.reg |= TC_CTRLA_WAVEGEN_NPWM;
+                //Set TCx in waveform mode Normal PWM
+                TCx->COUNT8.CC[Channelx].reg = (0xFF/100)*duty;
+                //Set PER to maximum counter value (resolution : 0xFF)
+                TCx->COUNT8.PER.reg = 0xFF;
+                // Enable TCx
+                TCx->COUNT8.CTRLA.reg |= TC_CTRLA_ENABLE;
+
+
+
+
+ // -- Configure TC -- How the Arduino core library wiring_analog.c does it
+        Tc* TCx = (Tc*) GetTC(pinDesc.ulPWMChannel);
+        // Disable TCx
+        TCx->COUNT8.CTRLA.bit.ENABLE = 0;
+        syncTC_8(TCx);
+        // Set Timer counter Mode to 8 bits, normal PWM, prescaler 1/256
+        TCx->COUNT8.CTRLA.reg |= TC_CTRLA_MODE_COUNT8 | TC_CTRLA_WAVEGEN_NPWM | TC_CTRLA_PRESCALER_DIV256;
+        syncTC_8(TCx);
+        // Set the initial value
+        TCx->COUNT8.CC[tcChannel].reg = (uint8_t) value;
+        syncTC_8(TCx);
+        // Set PER to maximum counter value (resolution : 0xFF)
+        TCx->COUNT8.PER.reg = 0xFF;
+        syncTC_8(TCx);
+        // Enable TCx
+        TCx->COUNT8.CTRLA.bit.ENABLE = 1;
+        syncTC_8(TCx);
+ */
+
 //////////////////////////////////////////////////////////////////////////////////////////////////// END TC3 setup for MR_PWM and IR_LED
 // Configure TCC0 setup for ML_PWM
 
@@ -244,8 +348,8 @@ void setup() {
   while (GCLK->STATUS.bit.SYNCBUSY);              // Wait for synchronization
 
   // Enable the port multiplexer for the 4 PWM channels: timer TCC0 outputs
-  const uint8_t CHANNELS = 1;
-  const uint8_t pwmPins[] = {6,}; // 5 for IR 38khz, 6 for ML_PWM, 10 for MR_PWM
+  const uint8_t CHANNELS = 3;
+  const uint8_t pwmPins[] = {5,6,10}; // 5 for IR 38khz, 6 for ML_PWM, 10 for MR_PWM
   for (uint8_t i = 0; i < CHANNELS; i++)
   {
      PORT->Group[g_APinDescription[pwmPins[i]].ulPort].PINCFG[g_APinDescription[pwmPins[i]].ulPin].bit.PMUXEN = 1;
@@ -391,7 +495,7 @@ void debugSensors()
     digitalWrite(LED_L_G, LED_ON); // Turn ON the Green LED
   } else 
   {
-    MOT_L_SPD_REG = 0;        // Left motor PWM register
+    MOT_L_SPD_REG = 10;        // Left motor PWM register
     digitalWrite(LED_L_G, LED_OFF); // Turn OFF the Green LED
   }
    
@@ -401,7 +505,7 @@ void debugSensors()
     digitalWrite(LED_R_G, LED_ON); // Turn ON the Green LED
   } else 
   {
-    MOT_R_SPD_REG = 0; // Right motor PWM register                     
+    MOT_R_SPD_REG = 10; // Right motor PWM register                     
     digitalWrite(LED_R_G, LED_OFF); // Turn OFF the Green LED
   }
 }
